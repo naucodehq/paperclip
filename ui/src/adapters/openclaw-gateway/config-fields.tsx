@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
+import { BRAND_NAME } from "@paperclipai/shared";
 import type { AdapterConfigFieldsProps } from "../types";
 import {
   Field,
@@ -134,7 +135,7 @@ export function OpenClawGatewayConfigFields({
 
       {!isCreate && (
         <>
-          <Field label="Paperclip API URL override">
+          <Field label={`${BRAND_NAME} API URL override`}>
             <DraftInput
               value={
                 eff(
@@ -226,7 +227,7 @@ export function OpenClawGatewayConfigFields({
 
           <Field label="Device auth">
             <div className="text-xs text-muted-foreground leading-relaxed">
-              Always enabled for gateway agents. Paperclip persists a device key during onboarding so pairing approvals
+              Always enabled for gateway agents. {BRAND_NAME} persists a device key during onboarding so pairing approvals
               remain stable across runs.
             </div>
           </Field>
