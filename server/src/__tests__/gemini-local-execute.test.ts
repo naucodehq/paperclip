@@ -127,6 +127,136 @@ describe("gemini execute", () => {
     }
   });
 
+  it("rewrites a stale/invalid selectedType in ~/.gemini/settings.json when an API key is present", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-gemini-auth-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "gemini");
+    const geminiHome = path.join(root, ".gemini");
+    const settingsPath = path.join(geminiHome, "settings.json");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(geminiHome, { recursive: true });
+    // Pre-seed the exact broken state that produces "Invalid auth method selected."
+    await fs.writeFile(
+      settingsPath,
+      JSON.stringify({ theme: "dark", selectedAuthType: "bogus", security: { auth: { selectedType: "bogus" } } }),
+      "utf8",
+    );
+    await writeFakeGeminiCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+
+    try {
+      await execute({
+        runId: "run-auth",
+        agent: { id: "a1", companyId: "c1", name: "G", adapterType: "gemini_local", adapterConfig: {} },
+        runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+        config: {
+          command: commandPath,
+          cwd: workspace,
+          env: { GEMINI_API_KEY: "test-key" },
+        },
+        context: {},
+        authToken: "t",
+        onLog: async () => {},
+      });
+
+      const settings = JSON.parse(await fs.readFile(settingsPath, "utf8")) as Record<string, unknown>;
+      expect(settings.selectedAuthType).toBe("gemini-api-key");
+      expect((settings.security as { auth: { selectedType: string } }).auth.selectedType).toBe("gemini-api-key");
+      // Unrelated settings must be preserved.
+      expect(settings.theme).toBe("dark");
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves settings.json untouched when no auth method can be inferred from env", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-gemini-noauth-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "gemini");
+    const geminiHome = path.join(root, ".gemini");
+    const settingsPath = path.join(geminiHome, "settings.json");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.mkdir(geminiHome, { recursive: true });
+    const original = JSON.stringify({ security: { auth: { selectedType: "oauth-personal" } } });
+    await fs.writeFile(settingsPath, original, "utf8");
+    await writeFakeGeminiCommand(commandPath);
+
+    const previousHome = process.env.HOME;
+    const previousKey = process.env.GEMINI_API_KEY;
+    const previousGoogleKey = process.env.GOOGLE_API_KEY;
+    process.env.HOME = root;
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.GOOGLE_API_KEY;
+
+    try {
+      await execute({
+        runId: "run-noauth",
+        agent: { id: "a1", companyId: "c1", name: "G", adapterType: "gemini_local", adapterConfig: {} },
+        runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+        config: { command: commandPath, cwd: workspace, env: {} },
+        context: {},
+        authToken: "t",
+        onLog: async () => {},
+      });
+
+      expect(await fs.readFile(settingsPath, "utf8")).toBe(original);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      if (previousKey === undefined) delete process.env.GEMINI_API_KEY;
+      else process.env.GEMINI_API_KEY = previousKey;
+      if (previousGoogleKey === undefined) delete process.env.GOOGLE_API_KEY;
+      else process.env.GOOGLE_API_KEY = previousGoogleKey;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("classifies exit 41 / 'Invalid auth method selected.' as gemini_auth_required", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-gemini-exit41-"));
+    const workspace = path.join(root, "workspace");
+    const commandPath = path.join(root, "gemini");
+    await fs.mkdir(workspace, { recursive: true });
+    await fs.writeFile(
+      commandPath,
+      `#!/usr/bin/env node
+process.stderr.write("Invalid auth method selected.\\n");
+process.exit(41);
+`,
+      "utf8",
+    );
+    await fs.chmod(commandPath, 0o755);
+
+    const previousHome = process.env.HOME;
+    process.env.HOME = root;
+
+    try {
+      const result = await execute({
+        runId: "run-41",
+        agent: { id: "a1", companyId: "c1", name: "G", adapterType: "gemini_local", adapterConfig: {} },
+        runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+        config: { command: commandPath, cwd: workspace, env: {} },
+        context: {},
+        authToken: "t",
+        onLog: async () => {},
+      });
+
+      expect(result.exitCode).toBe(41);
+      expect(result.errorCode).toBe("gemini_auth_required");
+      expect(result.errorMessage).toContain("Invalid auth method selected.");
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("always passes --approval-mode yolo", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-gemini-yolo-"));
     const workspace = path.join(root, "workspace");

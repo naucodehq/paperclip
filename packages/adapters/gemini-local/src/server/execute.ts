@@ -74,8 +74,94 @@ function renderApiAccessNote(env: Record<string, string>): string {
   ].join("\n");
 }
 
+function geminiConfigHome(): string {
+  return path.join(os.homedir(), ".gemini");
+}
+
 function geminiSkillsHome(): string {
-  return path.join(os.homedir(), ".gemini", "skills");
+  return path.join(geminiConfigHome(), "skills");
+}
+
+/**
+ * Map the effective run environment to the Gemini CLI auth method the CLI would
+ * accept for it. Returns null when we cannot positively infer a valid method
+ * (e.g. a bare interactive OAuth login), in which case we leave the user's
+ * persisted settings untouched.
+ */
+function resolveGeminiSelectedAuthType(env: Record<string, string>): string | null {
+  if (hasNonEmptyEnvValue(env, "GEMINI_API_KEY")) return "gemini-api-key";
+  if ((env.GOOGLE_GENAI_USE_VERTEXAI ?? "").trim().toLowerCase() === "true") return "vertex-ai";
+  if ((env.GOOGLE_GENAI_USE_GCA ?? "").trim().toLowerCase() === "true") return "oauth-personal";
+  return null;
+}
+
+function asPlainObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+/**
+ * Self-heal `~/.gemini/settings.json` so the CLI never fails with
+ * "Invalid auth method selected." (FatalAuthenticationError / exit 41) because a
+ * stale or schema-migrated `selectedType` is persisted in the deployment volume
+ * (e.g. after a redeploy pulls a newer `gemini-cli` whose auth schema changed).
+ * We only write when the environment positively implies a valid auth method, and
+ * we set it in both the current (`security.auth.selectedType`) and legacy
+ * (`selectedAuthType`) locations so whichever field the installed CLI reads holds
+ * a valid value — this also overrides any stale value regardless of precedence.
+ */
+async function ensureGeminiAuthSettings(
+  env: Record<string, string>,
+  onLog: AdapterExecutionContext["onLog"],
+): Promise<void> {
+  const authType = resolveGeminiSelectedAuthType(env);
+  if (!authType) return;
+
+  const configHome = geminiConfigHome();
+  const settingsPath = path.join(configHome, "settings.json");
+
+  let existing: Record<string, unknown> = {};
+  try {
+    existing = asPlainObject(JSON.parse(await fs.readFile(settingsPath, "utf8")));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") {
+      await onLog(
+        "stderr",
+        `[paperclip] Gemini settings.json at ${settingsPath} was unreadable; rewriting auth block: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+    }
+  }
+
+  const existingSecurity = asPlainObject(existing.security);
+  const existingAuth = asPlainObject(existingSecurity.auth);
+  const currentNested = typeof existingAuth.selectedType === "string" ? existingAuth.selectedType : "";
+  const currentLegacy = typeof existing.selectedAuthType === "string" ? existing.selectedAuthType : "";
+  if (currentNested === authType && currentLegacy === authType) return;
+
+  const next: Record<string, unknown> = {
+    ...existing,
+    selectedAuthType: authType,
+    security: {
+      ...existingSecurity,
+      auth: { ...existingAuth, selectedType: authType },
+    },
+  };
+
+  try {
+    await fs.mkdir(configHome, { recursive: true });
+    await fs.writeFile(settingsPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+    const previous = currentNested || currentLegacy;
+    await onLog(
+      "stderr",
+      `[paperclip] Set Gemini auth method to "${authType}" in ${settingsPath}${previous ? ` (was "${previous}")` : ""}.\n`,
+    );
+  } catch (err) {
+    await onLog(
+      "stderr",
+      `[paperclip] Failed to write Gemini settings.json at ${settingsPath}: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
+  }
 }
 
 /**
@@ -218,6 +304,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     ),
   );
   const billingType = resolveGeminiBillingType(effectiveEnv);
+  await ensureGeminiAuthSettings(effectiveEnv, onLog);
   const runtimeEnv = ensurePathInEnv(effectiveEnv);
   await ensureCommandResolvable(command, cwd, runtimeEnv);
 
@@ -421,12 +508,19 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       stderrLine ||
       `Gemini exited with code ${attempt.proc.exitCode ?? -1}`;
 
+    const exitCode = attempt.proc.exitCode ?? 0;
+    // Gemini CLI exit 41 == FatalAuthenticationError (mirrors the 53 == turn-limit
+    // mapping in isGeminiTurnLimitResult). Classify it as an auth problem even when
+    // the message ("Invalid auth method selected.") doesn't match the auth regex,
+    // so the UI surfaces an actionable auth hint instead of an opaque failure.
+    const isAuthFailure = exitCode !== 0 && (authMeta.requiresAuth || exitCode === 41);
+
     return {
       exitCode: attempt.proc.exitCode,
       signal: attempt.proc.signal,
       timedOut: false,
-      errorMessage: (attempt.proc.exitCode ?? 0) === 0 ? null : fallbackErrorMessage,
-      errorCode: (attempt.proc.exitCode ?? 0) !== 0 && authMeta.requiresAuth ? "gemini_auth_required" : null,
+      errorMessage: exitCode === 0 ? null : fallbackErrorMessage,
+      errorCode: isAuthFailure ? "gemini_auth_required" : null,
       usage: attempt.parsed.usage,
       sessionId: resolvedSessionId,
       sessionParams: resolvedSessionParams,
