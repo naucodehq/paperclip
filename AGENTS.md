@@ -1,5 +1,7 @@
 # AGENTS.md
 
+Deploy: đọc DEPLOY.md trước khi deploy hoặc chuyển repo.
+
 Guidance for human and AI contributors working in this repository.
 
 ## 1. Purpose
