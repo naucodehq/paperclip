@@ -1,6 +1,6 @@
 # Deploy (bản của NAUCode)
 
-Cập nhật 21/10/2026. Mọi dữ kiện dưới đây đã kiểm ngày đó, trừ chỗ ghi "chưa kiểm". File này nói về bản của NAUCode; tài liệu deploy của chính Paperclip nằm ở `doc/` và `docs/deploy/`.
+Cập nhật 22/10/2026. Mọi dữ kiện dưới đây đã kiểm ngày 21 và 22/10/2026, trừ chỗ ghi "chưa kiểm". File này nói về bản của NAUCode; tài liệu deploy của chính Paperclip nằm ở `doc/` và `docs/deploy/`.
 
 Chuẩn chung: tài liệu "Hướng dẫn deploy và tổ chức repo trên GitHub" (Ops Portal, kệ Standards; nguồn `naucodehq/naucode-portal`, `content/md-docs/standards/huong-dan-deploy.md`).
 
@@ -29,7 +29,7 @@ Không có webhook, không có GitHub Pages. App GitHub duy nhất cài trên or
 Không có lần deploy nào mong muốn từ repo này. Việc một lần push kích hoạt hôm nay:
 
 - Push lên `master`: `Release` (`verify_canary` rồi `publish_canary`) và `Refresh Lockfile` chạy. Test qua là `publish_canary` thử publish lên npm (đã xảy ra hai lần ngày 22/03/2026, hỏng ở bước publish). Không để chuyện đó xảy ra từ bản này.
-- `Refresh Lockfile` có quyền ghi (`contents`, `pull-requests`): nếu lockfile lệch, nó force-push nhánh `chore/refresh-lockfile`, mở PR và bật auto-merge vào `master`, tức thêm một lần push lên `master` và chạy lại Release. Đã từng sinh PR #1 (đã merge).
+- `Refresh Lockfile` có quyền ghi (`contents`, `pull-requests`): nếu lockfile lệch, nó force-push nhánh `chore/refresh-lockfile` rồi thử mở PR và bật auto-merge vào `master`. Với cài đặt hiện tại (Actions không được tạo hay duyệt PR: `can_approve_pull_request_reviews: false`; repo `allow_auto_merge: false`) bước mở PR sẽ hỏng, để lại nhánh lẻ và một lượt đỏ. Kiểm bằng `gh api repos/naucodehq/paperclip/actions/permissions/workflow` và `gh api repos/naucodehq/paperclip --jq .allow_auto_merge`. Kể cả khi bot merge được, merge do `GITHUB_TOKEN` làm không kích hoạt workflow, nên không chạy lại Release: PR #1 (github-actions tạo, merge thành `694a23e3` ngày 22/03/2026) không sinh lượt chạy nào.
 - Pull request vào `master`: workflow `PR` gồm `policy`, `verify` (typecheck, test, build, chạy thử release canary) và `e2e` (Playwright). Không publish. Test đang đỏ ở `verify`.
 - `e2e.yml` và `release-smoke.yml`: chỉ chạy tay.
 - Commit có `[skip ci]` trong message không kích hoạt workflow nào ở trên. Commit chỉ sửa tài liệu lên `master` thì luôn ghi `[skip ci]`.

@@ -145,3 +145,15 @@ A change is done when all are true:
 2. Typecheck, tests, and build pass
 3. Contracts are synced across db/shared/server/ui
 4. Docs updated when behavior or commands change
+
+## Ngữ cảnh và deploy (bản của NAUCode)
+
+Đọc CLAUDE.md và DEPLOY.md trước khi sửa code hoặc deploy. CLAUDE.md là hướng dẫn chính về ngữ cảnh NAUCode, áp dụng cho mọi công cụ AI. Chuẩn chung về org và deploy: `~/dev/naucode-portal/content/md-docs/standards/huong-dan-deploy.md`.
+
+### Cảnh báo
+
+- Push hay merge vào `master` là chạy workflow `Release` (verify rồi thử publish npm canary `paperclipai`, `@paperclipai/*`) và `Refresh Lockfile` (có quyền ghi: lockfile lệch thì nó force-push nhánh `chore/refresh-lockfile` rồi thử mở PR và bật auto-merge; với cài đặt hiện tại, Actions không được tạo PR và auto-merge tắt, bước mở PR sẽ hỏng và để lại nhánh lẻ cùng một lượt đỏ). Release đang bật. Commit chỉ sửa tài liệu thì ghi `[skip ci]` trong message; không merge code vào `master` khi Release chưa tắt.
+- Chỉ push lên `origin` (`naucodehq/paperclip`). Remote `upstream` là `paperclipai/paperclip` của bên thứ ba, không có quyền push. Repo này không phải fork trên GitHub, nên PR lên upstream phải đi từ một fork thật.
+- `gh` ở `~/dev/paperclip` chưa đặt repo mặc định và có remote `upstream`: luôn gọi kèm `-R naucodehq/paperclip`.
+- Repo công khai: không commit secret, `.env`, template hay dữ liệu của khách.
+- `~/dev/paperclip/.env` (không commit) đặt `DATABASE_URL` trỏ tới một Postgres trên Supabase, chưa kiểm là DB nào. Server tự áp migration khi chạy không TTY: không chạy server hay `pnpm db:migrate` với biến đó. Chi tiết ở DEPLOY.md, mục dev ở máy.
